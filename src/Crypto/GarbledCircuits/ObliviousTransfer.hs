@@ -55,10 +55,12 @@ xorBits xs ys | length xs /= length ys = err "xorBits" "unequal length arguments
 
 otSend :: Connection -> AESKey128 -> [(ByteString, ByteString)] -> IO ()
 otSend conn key elems = do
+    -- 1. for n input wire pairs
     let n = length elems
     g0 <- newGen
     let (s, g1) = randBits k g0
     q <- forM s $ \b -> do
+    -- 2. waiting for evaluator to send random pad
       qi <- recvOT conn b
       return $ bytes2Bits n qi
     let rows = tr q
@@ -67,6 +69,8 @@ otSend conn key elems = do
           rs = lpad 16 (bits2Bytes (xorBits row s))
       let ctx = x `xorBytes` hash key r i
       let cty = y `xorBytes` hash key rs i
+      -- 4. Garbler encrypt the input wires with the random pad received from Evaluator,
+      --    such that evaluator can only unlock one input wire from a give input wire paris
       send2 conn (ctx, cty)
 
 otRecv :: Connection -> AESKey128 -> [Bool] -> IO [ByteString]
@@ -77,10 +81,13 @@ otRecv conn key choices = do
     let (t, g1) = randBitMatrix (n, k) g0
     forM (tr t) $ \col -> do
       let j = bits2Bytes col
+      -- 3. Evaluator sends random pad to Garbler
       sendOT conn (lpad 16 j, lpad 16 j `xorBytes` lpad 16 r)
     forM (zip3 [0..] choices t) $ \(i, b, row) -> do
+      -- 5. Evaluator recieves the encryptied choices
       (x,y) <- recv2 conn
       let c = if b then y else x
+      -- 6. Evaluator unlock the input wire for a given input wire pairs
       let m = c `xorBytes` hash key (lpad 16 (bits2Bytes row)) i
       return m
 
